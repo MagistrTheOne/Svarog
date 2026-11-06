@@ -39,6 +39,7 @@ def main():
     p.add_argument("--temperature", type=float, default=0.8)
     p.add_argument("--top-p", type=float, default=0.9)
     p.add_argument("--greedy", action="store_true")
+    p.add_argument("--identity-chat", action="store_true", help="Format prompt as identity SFT question")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     args = p.parse_args()
@@ -76,7 +77,8 @@ def main():
     model = SvarogForCausalLM(model_cfg)
     model.load_state_dict(state["model"], strict=True)
     model = model.to(device).eval()
-    ids = [tokenizer.bos_id()] + tokenizer.encode(args.prompt, out_type=int)
+    formatted_prompt = ("Вопрос: " + args.prompt + "\nОтвет:") if args.identity_chat else args.prompt
+    ids = [tokenizer.bos_id()] + tokenizer.encode(formatted_prompt, out_type=int)
     max_context = model_cfg.max_position_embeddings
     if len(ids) >= max_context:
         p.error(f"Prompt exceeds model context ({max_context} tokens)")
