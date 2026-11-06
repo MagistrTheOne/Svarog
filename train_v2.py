@@ -50,10 +50,10 @@ def encode_file(path, tokenizer, max_docs=None):
 
 
 def make_batch(docs, seq, batch, rng, device, pad_id):
-    """Length-weighted document sampling; prefer full windows over EOS tails.
+    """Uniform document sampling; prefer full windows over EOS tails.
 
     A document is never mixed with another one inside a sample. Short
-    documents are supported but not preferentially oversampled.
+    documents are supported; use a larger corpus for robust training.
     """
     x = torch.full((batch, seq), pad_id, dtype=torch.long)
     y = torch.full((batch, seq), -100, dtype=torch.long)
