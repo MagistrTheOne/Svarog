@@ -34,7 +34,8 @@ def main():
     p.add_argument("--config", type=Path, default=Path("config_v2_2080.json"))
     p.add_argument("--checkpoint", type=Path, default=Path("checkpoints/svarog_v2_2080/latest.pt"))
     p.add_argument("--prompt", type=str, default="Сварог — это")
-    p.add_argument("--max-new-tokens", type=int, default=48)
+    p.add_argument("--max-new-tokens", type=int, default=96)
+    p.add_argument("--min-new-tokens", type=int, default=32, help="Suppress EOS before this many tokens")
     p.add_argument("--temperature", type=float, default=0.8)
     p.add_argument("--top-p", type=float, default=0.9)
     p.add_argument("--greedy", action="store_true")
@@ -43,6 +44,8 @@ def main():
     args = p.parse_args()
     if not args.prompt:
         p.error("Prompt must not be empty")
+    if args.min_new_tokens < 0 or args.min_new_tokens > args.max_new_tokens:
+        p.error("min-new-tokens must be between 0 and max-new-tokens")
     if args.max_new_tokens < 1:
         p.error("max-new-tokens must be positive")
     if args.temperature <= 0 or not 0 < args.top_p <= 1:
@@ -92,6 +95,8 @@ def main():
             # Do not emit training/control tokens as ordinary text.
             logits[tokenizer.pad_id()] = -float("inf")
             logits[tokenizer.bos_id()] = -float("inf")
+            if len(new_ids) < args.min_new_tokens:
+                logits[tokenizer.eos_id()] = -float("inf")
             if args.greedy:
                 next_id = int(logits.argmax())
             else:
@@ -110,7 +115,7 @@ def main():
     print("\n--- PROMPT ---\n" + args.prompt)
     print("\n--- GENERATED CONTINUATION ---\n" + continuation)
     print(f"\nGenerated tokens: {len(new_ids)}")
-    print("\nNOTE: 100 training steps on a small corpus are not enough for coherent language.")
+    print("\nNOTE: Suppressing EOS does not make an undertrained model fluent.")
 
 
 if __name__ == "__main__":
