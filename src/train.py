@@ -34,6 +34,7 @@ class SvarogTrainer:
     """Handles Svarog model training"""
 
     def __init__(self, config_path: str = "config.json"):
+        self.config_path = config_path
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = json.load(f)
 
@@ -55,6 +56,7 @@ class SvarogTrainer:
 
         # Training state
         self.global_step = 0
+        self.resume_tag = None
         self.best_loss = float('inf')
 
     def load_tokenizer(self) -> spm.SentencePieceProcessor:
@@ -83,7 +85,7 @@ class SvarogTrainer:
         texts = examples['text']
 
         # Tokenize
-        tokenized = self.tokenizer.encode(texts, out_type=int, add_bos=True, add_eos=True)
+        tokenized = [self.tokenizer.encode(text, out_type=int, add_bos=True, add_eos=True) for text in texts]
 
         # Pad/truncate to max_length
         max_length = self.data_config['max_length']
@@ -163,7 +165,7 @@ class SvarogTrainer:
         logger.info("Initializing model...")
 
         # Create model
-        self.model = create_svarog_model()
+        self.model = create_svarog_model(self.config_path)
 
         # Count parameters
         total_params = sum(p.numel() for p in self.model.parameters())
@@ -175,7 +177,7 @@ class SvarogTrainer:
         logger.info(f"Estimated model memory: {param_memory_gb:.2f} GB")
 
         # Initialize DeepSpeed
-        ds_config_path = "ds_config.json"
+        ds_config_path = str(Path(self.config_path).resolve().parent / self.training_config.get("deepspeed_config", "ds_config.json"))
         if not Path(ds_config_path).exists():
             raise FileNotFoundError(f"DeepSpeed config not found: {ds_config_path}")
 
@@ -189,6 +191,11 @@ class SvarogTrainer:
             config=ds_config
         )
 
+        if self.resume_tag:
+            loaded_path, _ = self.model.load_checkpoint(str(Path(self.paths["checkpoint_dir"])), tag=self.resume_tag)
+            if loaded_path is None:
+                raise FileNotFoundError(f"Cannot load checkpoint tag: {self.resume_tag}")
+            logger.info("Resumed checkpoint: %s", loaded_path)
         logger.info("Model and DeepSpeed initialized successfully")
 
     def save_checkpoint(self, step: int, loss: float) -> None:
@@ -197,7 +204,7 @@ class SvarogTrainer:
         checkpoint_path = checkpoint_dir / f"svarog_step_{step}"
 
         # Save model state
-        self.model.save_checkpoint(str(checkpoint_path))
+        self.model.save_checkpoint(str(checkpoint_dir), tag=f"svarog_step_{step}")
 
         # Save training state
         training_state = {
@@ -207,6 +214,7 @@ class SvarogTrainer:
             'config': self.config
         }
 
+        checkpoint_path.mkdir(parents=True, exist_ok=True)
         with open(checkpoint_path / "training_state.json", 'w') as f:
             json.dump(training_state, f, indent=2)
 
@@ -240,7 +248,7 @@ class SvarogTrainer:
         avg_loss = total_loss / num_batches
         perplexity = math.exp(avg_loss)
 
-        logger.info(".4f")
+        logger.info("Validation loss: %.4f", avg_loss)
         return avg_loss
 
     def train(self) -> None:
@@ -314,7 +322,7 @@ class SvarogTrainer:
                     if val_loss < self.best_loss:
                         self.best_loss = val_loss
                         self.save_checkpoint(self.global_step, val_loss)
-                        logger.info(".4f")
+                        logger.info("New best validation loss: %.4f", val_loss)
 
                 # Checkpointing
                 if self.global_step % save_steps == 0:
@@ -352,7 +360,7 @@ def main():
 
     if args.resume:
         logger.info(f"Resuming training from {args.resume}")
-        # Load checkpoint logic would go here
+        trainer.resume_tag = Path(args.resume).name
 
     trainer.run_training_pipeline()
 
