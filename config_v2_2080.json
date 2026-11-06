@@ -1,0 +1,39 @@
+{
+  "model": {
+    "name": "Svarog V2 2080",
+    "architecture": "llama",
+    "vocab_size": 16000,
+    "max_position_embeddings": 1024,
+    "hidden_size": 512,
+    "num_hidden_layers": 8,
+    "num_attention_heads": 8,
+    "intermediate_size": 1536,
+    "hidden_act": "silu",
+    "initializer_range": 0.02,
+    "rms_norm_eps": 0.000001,
+    "tie_word_embeddings": true,
+    "pad_token_id": 0,
+    "bos_token_id": 2,
+    "eos_token_id": 3
+  },
+  "training": {
+    "backend": "native_pytorch",
+    "batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.1,
+    "max_grad_norm": 1,
+    "seed": 42,
+    "mixed_precision": "fp16"
+  },
+  "tokenizer": {
+    "type": "sentencepiece",
+    "model_type": "bpe",
+    "vocab_size": 16000,
+    "model_path": "tokenizer/svarog_v2.model",
+    "pad_token_id": 0,
+    "unk_token_id": 1,
+    "bos_token_id": 2,
+    "eos_token_id": 3
+  }
+}
