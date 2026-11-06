@@ -4,7 +4,7 @@ Writes data_v3_next/corpus.txt and validation.txt with a unique split;
 keeps the old corpus/validation entirely separate. Every record is one line.
 
 Examples:
-  python build_corpus_v3_next.py --fineweb-ru 30000 --fineweb-en 5000 --wikipedia-ru 10000
+  python build_corpus_v3_next.py --fineweb-ru 30000 --fineweb-en 5000 --wikipedia-ru 10000\n\nThe legacy --fineweb-en flag transparently uses English Wikipedia; FineWeb2\ndoes not publish an eng_Latn config.
   python build_corpus_v3_next.py --dry-run
 """
 import argparse
@@ -19,7 +19,7 @@ from pathlib import Path
 SPACE = re.compile(r"\s+")
 SOURCE_PLANS = {
     "fineweb_ru": ("HuggingFaceFW/fineweb-2", "rus_Cyrl", "train", "text"),
-    "fineweb_en": ("HuggingFaceFW/fineweb-2", "eng_Latn", "train", "text"),
+    "fineweb_en": ("wikimedia/wikipedia", "20231101.en", "train", "text"),
     "wikipedia_ru": ("wikimedia/wikipedia", "20231101.ru", "train", "text"),
     "wikipedia_en": ("wikimedia/wikipedia", "20231101.en", "train", "text"),
 }
@@ -28,7 +28,8 @@ SOURCE_PLANS = {
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--fineweb-ru", type=int, default=30000)
-    p.add_argument("--fineweb-en", type=int, default=5000)
+    p.add_argument("--fineweb-en", type=int, default=5000,
+                   help="Legacy flag: English Wikipedia fallback, not FineWeb2")
     p.add_argument("--wikipedia-ru", type=int, default=10000)
     p.add_argument("--wikipedia-en", type=int, default=0)
     p.add_argument("--min-chars", type=int, default=400)
@@ -56,11 +57,17 @@ def main():
     tr = a.output_dir / "corpus.txt"
     va = a.output_dir / "validation.txt"
     prov = a.output_dir / "provenance.jsonl"
+    manifest_path = a.output_dir / "corpus_manifest.json"
+    if any(p.exists() for p in (tr, va, prov, manifest_path)):
+        p.error("Output files already exist. Choose a NEW --output-dir; no overwrites.")
+    tr_tmp = tr.with_suffix(".txt.partial")
+    va_tmp = va.with_suffix(".txt.partial")
+    prov_tmp = prov.with_suffix(".jsonl.partial")
     seen = set()
     counts = Counter()
     rng = random.Random(a.seed)
     started = time.monotonic()
-    with tr.open("w", encoding="utf-8") as train, va.open("w", encoding="utf-8") as valid, prov.open("w", encoding="utf-8") as provenance:
+    with tr_tmp.open("w", encoding="utf-8") as train, va_tmp.open("w", encoding="utf-8") as valid, prov_tmp.open("w", encoding="utf-8") as provenance:
         for key, target in targets.items():
             if target == 0:
                 continue
@@ -97,12 +104,20 @@ def main():
                 if accepted == target:
                     break
             print(f"DONE {key}: accepted={accepted}/{target} scanned={scanned}", flush=True)
-    manifest = {"version": "svarog_v3_next_1", "targets": targets,
+    if counts["fineweb_ru_train"] + counts["fineweb_ru_validation"] == 0:
+        raise RuntimeError("No Russian FineWeb2 documents accepted")
+    if sum(counts.values()) < 100:
+        raise RuntimeError("Insufficient documents; partial files preserved")
+    manifest = {"version": "svarog_v3_next_2", "targets": targets,
                 "counts": dict(counts), "source_configs": SOURCE_PLANS,
                 "split_seed": a.seed, "val_fraction": a.val_fraction,
                 "min_chars": a.min_chars, "max_chars": a.max_chars,
                 "note": "Old tokenizer is preserved; no new special token IDs. Review dataset licenses before redistribution."}
-    (a.output_dir / "corpus_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["source_note"] = "fineweb_en is a legacy flag mapped to English Wikipedia because FineWeb2 has no eng_Latn config"
+    tr_tmp.replace(tr)
+    va_tmp.replace(va)
+    prov_tmp.replace(prov)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("DONE", json.dumps(counts, ensure_ascii=False), flush=True)
 
 
