@@ -2,7 +2,7 @@
 
 Examples:
   python train_v2.py --steps 20 --seq 128 --eval-every 10 --save-every 10
-  python train_v2.py --steps 200 --seq 256 --resume
+  python train_v2.py --steps 2000 --seq 128 --resume
 
 No DeepSpeed, downloads or global dependency changes.
 """
@@ -49,41 +49,24 @@ def encode_file(path, tokenizer, max_docs=None):
     return documents
 
 
-def sample_batch(docs, seq, batch, rng, device, pad_id):
-    # Each example comes from ONE document; no cross-document leakage.
-    inputs = torch.full((batch, seq), pad_id, dtype=torch.long)
-    labels = torch.full((batch, seq), -100, dtype=torch.long)
-    for i in range(batch):
-        doc = docs[rng.randrange(len(docs))]
-        start = rng.randrange(max(1, len(doc) - 1))
-        chunk = doc[start:start + seq + 1]
-        usable = len(chunk) - 1
-        if usable < 1:
-            raise RuntimeError("Unexpected short document")
-        inputs[i, :usable] = torch.tensor(chunk[:-1])
-        labels[i, :usable] = torch.tensor(chunk[1:])
-    # Current Svarog LM shifts labels internally, so pass input-aligned labels:
-    # positions 1..usable predict token 1..usable from input positions 0..usable-1.
-    # Here instead return direct unshifted sequence of length seq with valid
-    # tokens, and mask the padding / final token.
-    return inputs.to(device), labels.to(device)
-
-
 def make_batch(docs, seq, batch, rng, device, pad_id):
+    """Length-weighted document sampling; prefer full windows over EOS tails.
+
+    A document is never mixed with another one inside a sample. Short
+    documents are supported but not preferentially oversampled.
+    """
     x = torch.full((batch, seq), pad_id, dtype=torch.long)
     y = torch.full((batch, seq), -100, dtype=torch.long)
     for i in range(batch):
         doc = docs[rng.randrange(len(docs))]
-        start = rng.randrange(max(1, len(doc) - 2))
-        chunk = doc[start:start + seq]
-        if len(chunk) < 2:
-            chunk = doc[:min(len(doc), seq)]
-        length = len(chunk)
-        x[i, :length] = torch.tensor(chunk)
-        # CausalLM.forward shifts internally: target at index j is predicted
-        # by logits at index j-1. No targets for padded positions.
-        if length > 1:
-            y[i, :length] = torch.tensor(chunk)
+        if len(doc) > seq:
+            start = rng.randrange(len(doc) - seq + 1)
+            chunk = doc[start:start + seq]
+        else:
+            chunk = doc
+        n = len(chunk)
+        x[i, :n] = torch.tensor(chunk)
+        y[i, :n] = torch.tensor(chunk)
     return x.to(device), y.to(device)
 
 
@@ -109,18 +92,19 @@ def main():
     p.add_argument("--train", type=Path, default=Path("data/corpus.txt"))
     p.add_argument("--val", type=Path, default=Path("data/validation.txt"))
     p.add_argument("--output", type=Path, default=Path("checkpoints/svarog_v2_2080"))
-    p.add_argument("--steps", type=int, default=20, help="Total optimizer steps, including resumed steps")
+    p.add_argument("--steps", type=int, default=2000, help="Total optimizer steps, including resumed steps")
     p.add_argument("--seq", type=int, default=128)
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--accum", type=int, default=8)
-    p.add_argument("--eval-every", type=int, default=10)
-    p.add_argument("--save-every", type=int, default=10)
+    p.add_argument("--eval-every", type=int, default=100)
+    p.add_argument("--save-every", type=int, default=100)
     p.add_argument("--val-batches", type=int, default=8)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--early-stop-patience", type=int, default=8, help="Consecutive evaluations without improvement; 0 disables")
     a = p.parse_args()
     if not torch.cuda.is_available():
         p.error("CUDA is required for this training entrypoint")
-    if min(a.steps, a.seq, a.batch, a.accum, a.eval_every, a.save_every, a.val_batches) < 1:
+    if min(a.steps, a.seq, a.batch, a.accum, a.eval_every, a.save_every, a.val_batches) < 1 or a.early_stop_patience < 0:
         p.error("All numeric settings must be positive")
     config = json.loads(a.config.read_text(encoding="utf-8"))
     cfg = SvarogConfig(**config["model"])
@@ -143,6 +127,10 @@ def main():
     torch.manual_seed(seed)
     random.seed(seed)
     train_rng, val_rng = random.Random(seed), random.Random(seed + 1)
+    # Fixed validation windows across evaluations for comparable loss.
+    validation_seed_state = val_rng.getstate()
+    best_loss = float("inf")
+    bad_evals = 0
     model = SvarogForCausalLM(cfg).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"],
                                   weight_decay=config["training"]["weight_decay"])
@@ -168,12 +156,15 @@ def main():
         torch.set_rng_state(state["torch_rng"])
         torch.cuda.set_rng_state(state["cuda_rng"], device)
         step_start = state["step"]
+        best_loss = state.get("best_loss", float("inf"))
+        bad_evals = state.get("bad_evals", 0)
         print("Resumed optimizer step", step_start)
     print("GPU:", torch.cuda.get_device_name(0),
           "parameters:", f"{sum(p.numel() for p in model.parameters()):,}")
     print("Training with real text; initial loss is NOT a quality benchmark.")
     model.train()
     for step in range(step_start + 1, a.steps + 1):
+        improved = False
         optimizer.zero_grad(set_to_none=True)
         losses = []
         for _ in range(a.accum):
@@ -191,14 +182,22 @@ def main():
         print(f"step={step}/{a.steps} train_loss={sum(losses)/len(losses):.4f} "
               f"vram_peak_MiB={torch.cuda.max_memory_allocated()/2**20:.1f}", flush=True)
         if step % a.eval_every == 0 or step == a.steps:
+            val_rng.setstate(validation_seed_state)
             val_loss = evaluate(model, val_docs, a.seq, a.batch, val_rng, device,
                                 tokenizer.pad_id(), a.val_batches)
             print(f"step={step} val_loss={val_loss:.4f} val_ppl={math.exp(min(val_loss, 30)):.2f}", flush=True)
-        if step % a.save_every == 0 or step == a.steps:
+            improved = val_loss < best_loss
+            if improved:
+                best_loss, bad_evals = val_loss, 0
+            else:
+                bad_evals += 1
+        stop = bool(a.early_stop_patience and bad_evals >= a.early_stop_patience)
+        if step % a.save_every == 0 or step == a.steps or improved or stop:
             state = {
                 "step": step, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
                 "scaler": scaler.state_dict(), "fingerprints": fingerprints,
                 "seq": a.seq, "batch": a.batch, "accum": a.accum,
+                "best_loss": best_loss, "bad_evals": bad_evals,
                 "train_rng": train_rng.getstate(), "val_rng": val_rng.getstate(),
                 "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state(device),
@@ -207,6 +206,14 @@ def main():
             torch.save(state, temp)
             temp.replace(ckpt)
             print("Saved:", ckpt, flush=True)
+            if improved:
+                best = a.output / "best.pt"
+                import shutil
+                shutil.copy2(ckpt, best)
+                print("Best validation checkpoint:", best, flush=True)
+        if stop:
+            print("EARLY STOP: validation did not improve", a.early_stop_patience, "times")
+            break
     print("TRAINING COMPLETE")
 
 
