@@ -51,3 +51,6 @@ training.log
 # Temporary files
 *.tmp
 *.temp
+
+# Historical local Windows environment (do not add new binaries)
+myenv/
