@@ -54,3 +54,6 @@ training.log
 
 # Historical local Windows environment (do not add new binaries)
 myenv/
+
+# V2.1 large streaming corpus and local configs
+data_v21/
