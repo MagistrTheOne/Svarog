@@ -42,6 +42,8 @@ def main():
     p.add_argument("--output-dir", type=Path, default=Path("data_v3_next"))
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--max-retries", type=int, default=3)
+    p.add_argument("--reset-partials", action="store_true",
+                   help="Explicitly discard incomplete .partial files in output-dir and rebuild")
     a = p.parse_args()
     targets = {"fineweb_ru": a.fineweb_ru, "fineweb_en": a.fineweb_en,
                "wikipedia_ru": a.wikipedia_ru, "wikipedia_en": a.wikipedia_en}
@@ -66,9 +68,13 @@ def main():
     tr_tmp = tr.with_suffix(".txt.partial")
     va_tmp = va.with_suffix(".txt.partial")
     prov_tmp = prov.with_suffix(".jsonl.partial")
-    for partial in (tr_tmp, va_tmp, prov_tmp):
-        if partial.exists():
-            p.error(f"Previous incomplete build found: {partial}. Choose a new output directory to avoid accidental overwrite.")
+    partials = (tr_tmp, va_tmp, prov_tmp, manifest_path.with_suffix(".json.partial"))
+    if any(x.exists() for x in partials):
+        if not a.reset_partials:
+            p.error("Incomplete .partial files exist. Use --reset-partials to rebuild explicitly or choose a fresh --output-dir.")
+        for partial in partials:
+            partial.unlink(missing_ok=True)
+        print("RESET: discarded incomplete partial files (explicit request)", flush=True)
     seen = set()
     counts = Counter()
     rng = random.Random(a.seed)
@@ -141,14 +147,14 @@ def main():
     va_tmp.replace(va)
     prov_tmp.replace(prov)
     manifest_path.with_suffix(".json.partial").replace(manifest_path)
-    # Complete manifest is the final commit marker.
-    # No partial corpus is considered complete without it.
-    # Manifest content already written above.
-    #
-    # Legacy redundant write removed below.
 
     print("DONE", json.dumps(counts, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        print("SVAROG CORPUS BUILD FAILED — full traceback follows:", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        sys.exit(1)
