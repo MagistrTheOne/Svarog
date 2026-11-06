@@ -90,7 +90,7 @@ class RotaryPositionEmbedding(nn.Module):
         a, b = x.chunk(2, dim=-1)
         return torch.cat((-b, a), dim=-1)
 
-    def apply(self, x: torch.Tensor, positions: torch.Tensor):
+    def apply_rotary(self, x: torch.Tensor, positions: torch.Tensor):
         cos, sin = self(positions, x.dtype)
         cos, sin = cos[None, None], sin[None, None]
         return x * cos + self.rotate_half(x) * sin
@@ -133,16 +133,16 @@ class SvarogAttention(nn.Module):
         # Apply RoPE on the same device as the input tensors.
         if position_ids is None:
             positions = torch.arange(seq_len, device=hidden_states.device)
-            q = self.rope.apply(q, positions)
-            k = self.rope.apply(k, positions)
+            q = self.rope.apply_rotary(q, positions)
+            k = self.rope.apply_rotary(k, positions)
         else:
             # Shared positions are supported; arbitrary per-sample offsets need
             # a batched RoPE implementation.
             if not torch.equal(position_ids, position_ids[:1].expand_as(position_ids)):
                 raise ValueError("Per-sample position_ids are not supported")
             positions = position_ids[0].to(hidden_states.device)
-            q = self.rope.apply(q, positions)
-            k = self.rope.apply(k, positions)
+            q = self.rope.apply_rotary(q, positions)
+            k = self.rope.apply_rotary(k, positions)
 
         # Attention computation
         attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
