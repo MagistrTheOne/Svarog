@@ -36,7 +36,7 @@ def docs_for_language(language, target, min_chars, max_chars, seed, scan_factor)
     from datasets import load_dataset
     config = CONFIGS[language]
     stream = load_dataset(SOURCE, config, split="train", streaming=True,
-                          trust_remote_code=False, revision=REVISION)
+                          revision=REVISION)
     # Streaming shuffle uses bounded memory; this is not uniform random
     # sampling of the entire Wikipedia corpus.
     stream = stream.shuffle(seed=seed, buffer_size=1000)
