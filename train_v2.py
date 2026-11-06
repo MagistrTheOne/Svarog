@@ -76,6 +76,8 @@ def make_batch(docs, seq, batch, rng, device, pad_id):
         doc = docs[rng.randrange(len(docs))]
         start = rng.randrange(max(1, len(doc) - 2))
         chunk = doc[start:start + seq]
+        if len(chunk) < 2:
+            chunk = doc[:min(len(doc), seq)]
         length = len(chunk)
         x[i, :length] = torch.tensor(chunk)
         # CausalLM.forward shifts internally: target at index j is predicted
