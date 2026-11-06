@@ -6,7 +6,6 @@ Note: the next train_v2.py run starts from optimizer step 0, while the weights
 were pretrained for the source step count.
 """
 import argparse
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -33,6 +32,8 @@ def main():
     p.add_argument("--batch", type=int, default=4)
     p.add_argument("--accum", type=int, default=8)
     a = p.parse_args()
+    if not torch.cuda.is_available():
+        p.error("CUDA required to initialize resumable RNG state")
     a.output.mkdir(parents=True, exist_ok=True)
     dst = a.output / "latest.pt"
     if dst.exists():
@@ -49,8 +50,6 @@ def main():
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
     from model import SvarogConfig, SvarogForCausalLM
-    from train_v2 import encode_file
-    import sentencepiece as spm
     model = SvarogForCausalLM(SvarogConfig(**cfg["model"]))
     model.load_state_dict(state["model"], strict=True)
     optimizer = torch.optim.AdamW(model.parameters(),
