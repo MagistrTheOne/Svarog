@@ -144,14 +144,19 @@ class SvarogAttention(nn.Module):
             q = self.rope.apply_rotary(q, positions)
             k = self.rope.apply_rotary(k, positions)
 
-        # Attention computation
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn_output = torch.matmul(attn_weights, v)
+        # PyTorch SDPA applies causal masking without materializing attention
+        # matrices. It also combines the optional padding mask.
+        if attention_mask is None:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            # Attention mask uses additive 0 / negative-infinity convention.
+            causal = torch.ones((seq_len, seq_len), device=q.device, dtype=torch.bool).tril()
+            bias = torch.zeros((seq_len, seq_len), device=q.device, dtype=q.dtype)
+            bias.masked_fill_(~causal, torch.finfo(q.dtype).min)
+            attn_output = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attention_mask + bias[None, None, :, :],
+                is_causal=False,
+            )
 
         # Reshape and project back
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
