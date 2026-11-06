@@ -13,6 +13,7 @@ from pathlib import Path
 import sentencepiece as spm
 
 SPECIAL = ["<pad>", "<unk>", "<s>", "</s>"]
+TOKENIZER_IDS = {"pad": 0, "unk": 1, "bos": 2, "eos": 3}
 
 
 def audit(model_path: Path):
@@ -29,7 +30,9 @@ def audit(model_path: Path):
         recovered = processor.decode(ids)
         print(json.dumps({"text": text, "ids": ids[:32], "tokens": len(ids),
                           "roundtrip": recovered == text, "decoded": recovered}, ensure_ascii=False))
-    print("Special IDs:", {x: processor.piece_to_id(x) for x in SPECIAL})
+    special_ids = {x: processor.piece_to_id(x) for x in SPECIAL}
+    print("Special IDs:", special_ids)
+    assert [special_ids[x] for x in SPECIAL] == [0, 1, 2, 3], "Tokenizer special IDs mismatch"
 
 
 def main():
@@ -62,6 +65,13 @@ def main():
         num_threads=8,
     )
     audit(prefix.with_suffix(".model"))
+    manifest = {"architecture": "svarog_v2", "tokenizer": str(prefix.with_suffix(".model")),
+                "vocab_size": spm.SentencePieceProcessor(model_file=str(prefix.with_suffix(".model"))).vocab_size(),
+                "pad_token_id": 0, "unk_token_id": 1, "bos_token_id": 2, "eos_token_id": 3,
+                "normalization": "identity", "byte_fallback": True}
+    (prefix.parent / (prefix.name + "_manifest.json")).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("Tokenizer manifest:", prefix.parent / (prefix.name + "_manifest.json"))
 
 
 if __name__ == "__main__":
