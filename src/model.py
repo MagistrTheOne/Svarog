@@ -70,56 +70,30 @@ class RMSNorm(nn.Module):
 
 
 class RotaryPositionEmbedding(nn.Module):
-    """Rotary Position Embedding (RoPE)"""
+    """Device-safe rotary embeddings with position offset support."""
 
     def __init__(self, dim: int, max_position_embeddings: int = 2048, base: int = 10000):
         super().__init__()
+        if dim % 2:
+            raise ValueError("RoPE head dimension must be even")
         self.dim = dim
-        self.max_position_embeddings = max_position_embeddings
-        self.base = base
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
 
-        # Precompute the inverse frequencies
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
+    def forward(self, positions: torch.Tensor, dtype: torch.dtype):
+        freqs = torch.outer(positions.reshape(-1).to(self.inv_freq.dtype), self.inv_freq)
+        phase = torch.cat((freqs, freqs), dim=-1)
+        return phase.cos().to(dtype), phase.sin().to(dtype)
 
-        # Precompute position-dependent rotations
-        self._set_cos_sin_cache(max_position_embeddings)
+    @staticmethod
+    def rotate_half(x: torch.Tensor):
+        a, b = x.chunk(2, dim=-1)
+        return torch.cat((-b, a), dim=-1)
 
-    def _set_cos_sin_cache(self, seq_len: int):
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(seq_len, device=self.inv_freq.device).type_as(self.inv_freq)
-        freqs = torch.einsum("i , j -> i j", t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos()[None, None, :, :])
-        self.register_buffer("sin_cached", emb.sin()[None, None, :, :])
-
-    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len)
-
-        return (
-            self.cos_cached[:, :, :seq_len, ...],
-            self.sin_cached[:, :, :seq_len, ...],
-        )
-
-    def apply_rotary_pos_emb(
-        self, tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
-    ) -> torch.Tensor:
-        return (tensor * cos) + (self.rotate_half(tensor) * sin)
-
-    def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
-        """Rotates half the hidden dims of the input."""
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
-        return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(q, k, cos, sin):
-    """Apply rotary position embedding to q and k"""
-    rope = RotaryPositionEmbedding(q.shape[-1])
-    cos, sin = rope(q, q.shape[-2])
-    return rope.apply_rotary_pos_emb(q, cos, sin), rope.apply_rotary_pos_emb(k, cos, sin)
+    def apply(self, x: torch.Tensor, positions: torch.Tensor):
+        cos, sin = self(positions, x.dtype)
+        cos, sin = cos[None, None], sin[None, None]
+        return x * cos + self.rotate_half(x) * sin
 
 
 class SvarogAttention(nn.Module):
@@ -129,6 +103,8 @@ class SvarogAttention(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
+        if self.hidden_size % self.num_heads:
+            raise ValueError("hidden_size must be divisible by num_attention_heads")
         self.head_dim = self.hidden_size // self.num_heads
 
         self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
@@ -154,10 +130,19 @@ class SvarogAttention(nn.Module):
         k = self.k_proj(hidden_states).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(hidden_states).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Apply RoPE
-        cos, sin = self.rope(hidden_states, seq_len)
-        q = self.rope.apply_rotary_pos_emb(q, cos, sin)
-        k = self.rope.apply_rotary_pos_emb(k, cos, sin)
+        # Apply RoPE on the same device as the input tensors.
+        if position_ids is None:
+            positions = torch.arange(seq_len, device=hidden_states.device)
+            q = self.rope.apply(q, positions)
+            k = self.rope.apply(k, positions)
+        else:
+            # Shared positions are supported; arbitrary per-sample offsets need
+            # a batched RoPE implementation.
+            if not torch.equal(position_ids, position_ids[:1].expand_as(position_ids)):
+                raise ValueError("Per-sample position_ids are not supported")
+            positions = position_ids[0].to(hidden_states.device)
+            q = self.rope.apply(q, positions)
+            k = self.rope.apply(k, positions)
 
         # Attention computation
         attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
@@ -345,46 +330,30 @@ class SvarogForCausalLM(PreTrainedModel):
         return {"loss": loss, "logits": logits}
 
     @torch.no_grad()
-    def generate(
-        self,
-        input_ids: torch.LongTensor,
-        max_length: int = 100,
-        temperature: float = 1.0,
-        top_p: float = 0.9,
-        do_sample: bool = True,
-    ) -> torch.LongTensor:
-        """Simple text generation"""
+    def generate(self, input_ids: torch.LongTensor, max_length: int = 100,
+                 temperature: float = 1.0, top_p: float = 0.9,
+                 do_sample: bool = True) -> torch.LongTensor:
+        """Autoregressive sampling with correct batched top-p indexing."""
+        if temperature <= 0 or not 0 < top_p <= 1:
+            raise ValueError("temperature must be positive and top_p in (0, 1]")
         self.eval()
-
-        for _ in range(max_length - input_ids.shape[1]):
-            outputs = self(input_ids=input_ids)
-            next_token_logits = outputs["logits"][:, -1, :] / temperature
-
+        finished = torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
+        for _ in range(max(0, max_length - input_ids.shape[1])):
+            logits = self(input_ids=input_ids)["logits"][:, -1, :] / temperature
             if do_sample:
-                # Top-p sampling
-                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                sorted_probs = F.softmax(sorted_logits, dim=-1)
-                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
-                # Remove tokens with cumulative probability above the threshold
-                sorted_probs[torch.where(cumulative_probs > top_p)] = 0
-
-                # Sample from the remaining tokens
-                if sorted_probs.sum() > 0:
-                    sorted_probs = sorted_probs / sorted_probs.sum()
-                    next_token = torch.multinomial(sorted_probs, 1)
-                    next_token = sorted_indices[next_token]
-                else:
-                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                values, indices = torch.sort(logits, descending=True, dim=-1)
+                probs = F.softmax(values, dim=-1)
+                remove = probs.cumsum(dim=-1) - probs > top_p
+                values = values.masked_fill(remove, -float("inf"))
+                sampled = torch.multinomial(F.softmax(values, dim=-1), 1)
+                next_token = indices.gather(-1, sampled)
             else:
-                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-            input_ids = torch.cat([input_ids, next_token], dim=1)
-
-            # Stop if EOS token is generated
-            if next_token.item() == self.config.eos_token_id:
+                next_token = logits.argmax(dim=-1, keepdim=True)
+            next_token = torch.where(finished[:, None], self.config.eos_token_id, next_token)
+            finished |= next_token.squeeze(-1).eq(self.config.eos_token_id)
+            input_ids = torch.cat((input_ids, next_token), dim=-1)
+            if finished.all():
                 break
-
         return input_ids
 
 
