@@ -57,3 +57,12 @@ myenv/
 
 # V2.1 large streaming corpus and local configs
 data_v21/
+
+# Stage 3 local-only datasets, checkpoints and HF bundle
+data_stage3_50m/
+data_stage3_sft/
+stage3/checkpoints/
+hf_model/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
