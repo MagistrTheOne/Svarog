@@ -57,7 +57,7 @@ def main():
                             issues["high_word_repetition"]+=1
                 low=q.lower()
                 category=("code" if any(t in low for t in ("python","код","функци","script","function","javascript"))
-                          else "math" if re.search(r"\d+\\s*[+*/=-]\\s*\d+",low) else
+                          else "math" if re.search(r"\d+\s*[+*/=-]\s*\d+",low) else
                           "explanation" if any(t in low for t in ("объясни","explain","почему","why","what is")) else
                           "dialogue" if any(t in low for t in ("привет","hello","hi ","как дела")) else "other")
                 topic[category]+=1
