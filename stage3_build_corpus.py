@@ -23,10 +23,10 @@ SOURCES = (
     ("fineweb_en", "en", "HuggingFaceFW/fineweb", "sample-10BT", 10_000_000),
     ("wikipedia_en", "en", "wikimedia/wikipedia", "20231101.en", 5_000_000),
 )
-SPACE = re.compile(r"\\s+")
-EMAIL = re.compile(r"\\b[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}\\b")
-URL = re.compile(r"https?://\\S+|www\\.\\S+", re.I)
-PHONE = re.compile(r"(?<!\\d)(?:\\+?\\d[\\s()\\-]*){10,}(?!\\d)")
+SPACE = re.compile(r"\s+")
+EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+URL = re.compile(r"https?://\S+|www\.\S+", re.I)
+PHONE = re.compile(r"(?<!\d)(?:\+?\d[\s()\-]*){10,}(?!\d)")
 BLOCK = ("casino", "porn", "xxx", "slot machine", "viagra", "ставки на спорт",
          "казино онлайн", "знакомства для секса", "купить диплом", "займ без отказа")
 SEED = 73019
@@ -58,7 +58,7 @@ def clean(raw, lang):
     letters = [c for c in text if c.isalpha()]
     if len(letters) < 180:
         return None
-    script = sum(("\\u0400" <= c <= "\\u052f") if lang == "ru"
+    script = sum(("\u0400" <= c <= "\u052f") if lang == "ru"
                  else ("a" <= c.lower() <= "z") for c in letters)
     if script / len(letters) < (0.52 if lang == "ru" else 0.74):
         return None
@@ -188,15 +188,15 @@ def export(db, output, tokenizer_sha):
     tmp = {k: Path(str(v) + ".partial") for k, v in outputs.items()}
     for file in tmp.values():
         file.unlink(missing_ok=True)
-    with tmp["train"].open("w", encoding="utf-8") as train, \\
-         tmp["validation"].open("w", encoding="utf-8") as valid, \\
+    with tmp["train"].open("w", encoding="utf-8") as train, \
+         tmp["validation"].open("w", encoding="utf-8") as valid, \
          tmp["provenance"].open("w", encoding="utf-8") as prov:
         for key, source, lang, split, n, value in db.execute(
             "SELECT digest,source,lang,split,tokens,text FROM documents ORDER BY rowid"):
-            (train if split == "train" else valid).write(value + "\\n")
+            (train if split == "train" else valid).write(value + "\n")
             prov.write(json.dumps({"sha256": key, "source": source, "language": lang,
                                    "split": split, "tokens_with_bos_eos": n},
-                                  ensure_ascii=False) + "\\n")
+                                  ensure_ascii=False) + "\n")
             counts[f"{lang}_{split}_tokens"] += n
             counts[f"{source}_{split}_docs"] += 1
     if not counts["ru_validation_tokens"] or not counts["en_validation_tokens"]:
