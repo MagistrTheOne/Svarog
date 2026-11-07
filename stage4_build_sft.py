@@ -18,6 +18,7 @@ from stage3_sft_persona import SVAROG_SYSTEM
 
 SOURCES = {
     "ultrachat": ("HuggingFaceH4/ultrachat_200k", "train_sft"),
+    "ru_instruct": ("d0rj/ru-instruct", "train"),
     "aya": ("CohereLabs/aya_dataset", "train"),
 }
 SPACE = re.compile(r"\s+")
@@ -62,12 +63,12 @@ def language(text):
 
 
 def extract(source, row):
-    if source == "ultrachat":
-        messages = row.get("messages", [])
+    if source in ("ultrachat", "ru_instruct"):
+        messages = row.get("messages", []) if source == "ultrachat" else row.get("conversations", [])
         if not isinstance(messages, list):
             return None
         # Keep one-turn pairs only; avoids leaking later turns and role confusion.
-        turns = [m for m in messages if m.get("role") in ("user", "assistant")]
+        turns = [m for m in messages if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
         if len(turns) < 2 or turns[0]["role"] != "user" or turns[1]["role"] != "assistant":
             return None
         return turns[0].get("content"), turns[1].get("content")
@@ -145,9 +146,11 @@ def main():
                 return True
 
             # Round-robin sources, one stream per dataset; stop if exhausted.
-            for source in ("aya", "ultrachat"):
+            for source in ("ru_instruct", "aya", "ultrachat"):
                 repo, split = SOURCES[source]
                 print("STREAM", repo, split, flush=True)
+                if counts["ru"] >= a.ru_target and counts["en"] >= a.en_target:
+                    break
                 stream = open_stream(repo, split, a.seed)
                 scanned = 0
                 for row in stream:
