@@ -29,10 +29,11 @@ SPAM = ("download free", "click here", "buy now", "casino", "скачать бе
 
 def open_stream(repo, split, seed):
     """Load Hub-hosted Parquet conversion, never execute legacy dataset scripts."""
-    api = "https://huggingface.co/api/datasets/" + repo + "/parquet"
+    api = "https://datasets-server.huggingface.co/parquet?" + urllib.parse.urlencode({"dataset": repo})
     req = urllib.request.Request(api, headers={"User-Agent": "NULLXES-SVAROG-SFT/1.0"})
     with urllib.request.urlopen(req, timeout=60) as response:
-        entries = json.load(response)
+        payload = json.load(response)
+    entries = payload.get("parquet_files", []) if isinstance(payload, dict) else payload
     if not isinstance(entries, list):
         raise RuntimeError(f"Unexpected Parquet listing for {repo}: {str(entries)[:250]}")
     candidates = [item for item in entries if isinstance(item, dict)
