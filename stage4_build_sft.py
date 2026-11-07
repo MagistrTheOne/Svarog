@@ -84,7 +84,6 @@ def main():
         p.error("SFT outputs already exist. Refusing to overwrite.")
     if not a.persona.is_file():
         p.error(f"Missing persona seed: {a.persona}. Run python stage3_sft_persona.py first")
-    rng = random.Random(a.seed)
     seen = set()
     counts = {"ru": 0, "en": 0, "persona": 0, "train": 0, "validation": 0}
     provenance = {}
@@ -93,7 +92,12 @@ def main():
     try:
         with train_tmp.open("w", encoding="utf-8") as train, val_tmp.open("w", encoding="utf-8") as val:
             def accept(question, answer, origin, persona=False):
-                if not valid(question) or not valid(answer):
+                if not isinstance(question, str) or not isinstance(answer, str):
+                    return False
+                if persona:
+                    if not question.strip() or not answer.strip():
+                        return False
+                elif not valid(question) or not valid(answer):
                     return False
                 question, answer = norm(question), norm(answer)
                 lang = language(question)
