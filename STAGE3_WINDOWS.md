@@ -57,3 +57,17 @@ FineWeb2 is published under ODC-By 1.0 and subject to Common Crawl terms. FineWe
 Stage 13 will load HF safetensors weights, keep tokenizer unchanged, create new optimizer, train all 131,697,408 parameters, checkpoint and resume locally on RTX 2080 SUPER. Correct causal loss: model(input_ids=x, labels=x)["loss"], because model.forward shifts labels itself. SFT must instead mask system/user tokens and train loss on assistant tokens only. Final QA and HF release happen only after training results exist.
 
 There is no claim of 50M tokens being downloaded until the local pipeline finishes and the manifest confirms counts.
+
+## Stage 13: START FULL-PARAMETER TRAINING
+
+After the 50M-token corpus is complete and its manifest is inspected:
+
+    git pull --ff-only origin main
+    python stage3_train.py --model-dir .\hf_model --data-dir .\data_stage3_50m --output .\stage3\checkpoints --steps 6000 --seq 256 --batch 1 --accum 32 --lr 2e-5 --eval-every 200 --save-every 200
+
+This builds local compact uint32 memory-mapped token caches (about 200 MB for 50M tokens), then trains the full 131.7M model with FP16 and AdamW. Checkpoints include model, optimizer, scaler, RNG and dataset fingerprints. The first run starts from the released HF safetensors. The 6000 steps correspond to approximately 49.15M token presentations at 256 x 1 x 32, with random document sampling (not a guaranteed unique-token epoch).
+
+After a restart, rerun the same command with `--resume`. If `latest.pt` already exists, the script refuses to start from scratch. Training logs are printed to the terminal. The model is not published automatically.
+
+Important: this is full-parameter training and may take many hours or days on an RTX 2080 SUPER. Monitor temperature, disk space and validation loss. Do not run the old train_v2.py with the HF model bundle.
+
