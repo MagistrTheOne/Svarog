@@ -113,7 +113,7 @@ def main():
     import sentencepiece as spm
     tokenizer_file = a.model_dir / "tokenizer.model"
     if not tokenizer_file.exists() or not a.stage15_best.exists():
-        p.error("Missing tokenizer or Stage 13 best.pt")
+        p.error("Missing tokenizer or Stage 15 best.pt")
     train_file = a.data_dir / "train.jsonl"
     val_file = a.data_dir / "validation.jsonl"
     if not train_file.exists() or not val_file.exists():
@@ -131,7 +131,7 @@ def main():
     model, _ = load_svarog(a.model_dir.resolve(), device="cpu")
     if a.seq > model.config.max_position_embeddings:
         p.error("Sequence exceeds model context")
-    stage13 = torch.load(a.stage13_best, map_location="cpu", weights_only=False)
+    stage15 = torch.load(a.stage15_best, map_location="cpu", weights_only=False)
     if stage15.get("step") != 1500:
         print("WARNING: Stage 15 best step is", stage15.get("step"))
     model.load_state_dict(stage15["model"], strict=True)
@@ -143,7 +143,7 @@ def main():
     torch.manual_seed(a.seed)
     torch.cuda.manual_seed_all(a.seed)
     fingerprint = {
-        "stage13_sha256": sha256(a.stage13_best),
+        "stage15_sha256": sha256(a.stage15_best),
         "tokenizer_sha256": sha256(tokenizer_file),
         "train_sha256": sha256(train_file),
         "validation_sha256": sha256(val_file),
