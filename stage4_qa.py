@@ -30,7 +30,7 @@ def sha(path):
     return h.hexdigest()
 
 def infer(model, sp, system, question, max_new):
-    prefix=f"[im_start]system\\n{system}[im_end]\\n[im_start]user\\n{question}[im_end]\\n[im_start]assistant\\n"
+    prefix=f"[im_start]system\n{system}[im_end]\n[im_start]user\n{question}[im_end]\n[im_start]assistant\n"
     ids=[sp.bos_id()]+sp.encode(prefix,out_type=int)
     if len(ids)+max_new>model.config.max_position_embeddings:
         raise RuntimeError("Prompt exceeds context")
