@@ -17,6 +17,7 @@ from stage3_sft_persona import SVAROG_SYSTEM
 SOURCES = {
     "ultrachat": ("HuggingFaceH4/ultrachat_200k", "train_sft"),
     "aya": ("CohereForAI/aya_dataset", "train"),
+    "ru_alpaca": ("IlyaGusev/ru_turbo_alpaca", "train"),
 }
 SPACE = re.compile(r"\s+")
 SPAM = ("download free", "click here", "buy now", "casino", "скачать бесплатно",
@@ -60,6 +61,12 @@ def extract(source, row):
         if len(turns) < 2 or turns[0]["role"] != "user" or turns[1]["role"] != "assistant":
             return None
         return turns[0].get("content"), turns[1].get("content")
+    if source == "ru_alpaca":
+        question = row.get("instruction", "")
+        context = row.get("input", "")
+        if context:
+            question += "\n" + context
+        return question, row.get("output")
     if source == "aya":
         # Aya's instruction/response dataset.
         return row.get("inputs"), row.get("targets")
@@ -128,7 +135,7 @@ def main():
                 return True
 
             # Round-robin sources, one stream per dataset; stop if exhausted.
-            for source in ("aya", "ultrachat"):
+            for source in ("ru_alpaca", "aya", "ultrachat"):
                 repo, split = SOURCES[source]
                 print("STREAM", repo, split, flush=True)
                 stream = load_dataset(repo, split=split, streaming=True)
