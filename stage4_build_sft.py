@@ -18,8 +18,7 @@ from stage3_sft_persona import SVAROG_SYSTEM
 
 SOURCES = {
     "ultrachat": ("HuggingFaceH4/ultrachat_200k", "train_sft"),
-    "aya": ("CohereForAI/aya_dataset", "train"),
-    "ru_alpaca": ("IlyaGusev/ru_turbo_alpaca", "train"),
+    "aya": ("CohereLabs/aya_dataset", "train"),
 }
 SPACE = re.compile(r"\s+")
 SPAM = ("download free", "click here", "buy now", "casino", "скачать бесплатно",
@@ -28,23 +27,11 @@ SPAM = ("download free", "click here", "buy now", "casino", "скачать бе
 
 
 def open_stream(repo, split, seed):
-    """Load Hub-hosted Parquet conversion, never execute legacy dataset scripts."""
-    api = "https://datasets-server.huggingface.co/parquet?" + urllib.parse.urlencode({"dataset": repo})
-    req = urllib.request.Request(api, headers={"User-Agent": "NULLXES-SVAROG-SFT/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as response:
-        payload = json.load(response)
-    entries = payload.get("parquet_files", []) if isinstance(payload, dict) else payload
-    if not isinstance(entries, list):
-        raise RuntimeError(f"Unexpected Parquet listing for {repo}: {str(entries)[:250]}")
-    candidates = [item for item in entries if isinstance(item, dict)
-                  and item.get("split") == split and isinstance(item.get("url"), str)]
-    if not candidates:
-        available = sorted({str(item.get("split")) for item in entries if isinstance(item, dict)})
-        raise RuntimeError(f"No Parquet split {split} for {repo}; available: {available}")
-    urls = [item["url"] for item in candidates]
-    print(f"PARQUET {repo}: {len(urls)} files; no legacy script", flush=True)
-    return load_dataset("parquet", data_files={"train": urls}, split="train",
-                        streaming=True).shuffle(seed=seed, buffer_size=2000)
+    """Use datasets-native Parquet repositories; no Dataset Viewer API."""
+    print(f"NATIVE PARQUET {repo} split={split}", flush=True)
+    return load_dataset(repo, split=split, streaming=True).shuffle(
+        seed=seed, buffer_size=2000
+    )
 
 
 def norm(text):
@@ -158,7 +145,7 @@ def main():
                 return True
 
             # Round-robin sources, one stream per dataset; stop if exhausted.
-            for source in ("ru_alpaca", "aya", "ultrachat"):
+            for source in ("aya", "ultrachat"):
                 repo, split = SOURCES[source]
                 print("STREAM", repo, split, flush=True)
                 stream = open_stream(repo, split, a.seed)
