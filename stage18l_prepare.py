@@ -24,7 +24,7 @@ def record(cat,key,question,answer,template_id):
  return {"category":cat,"canonical_key":list(key),"template_id":template_id,
          "messages":[{"role":"system","content":SVAROG_SYSTEM},
                      {"role":"user","content":question},
-                     {"role":"assistant","content":str(answer)+"."]]}
+                     {"role":"assistant","content":str(answer)+"."}]}
 def main():
  p=argparse.ArgumentParser()
  p.add_argument("--output",type=Path,default=Path("data_stage18l_concepts"))
