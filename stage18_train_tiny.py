@@ -92,7 +92,7 @@ def evaluate(model, data, pad, seq, n):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model-dir", type=Path, default=Path("hf_model"))
-    p.add_argument("--stage17-best", type=Path, default=Path("stage6_tiny/checkpoints/best.pt"))
+    p.add_argument("--stage17-best", type=Path, default=Path("stage5/checkpoints/best.pt"))
     p.add_argument("--data-dir", type=Path, default=Path("data_stage18_tiny"))
     p.add_argument("--output", type=Path, default=Path("stage6_tiny/checkpoints"))
     p.add_argument("--steps", type=int, default=200)
