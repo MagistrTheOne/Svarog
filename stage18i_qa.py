@@ -13,7 +13,7 @@ def final_number(text):
 def main():
  p=argparse.ArgumentParser()
  p.add_argument("--model-dir",type=Path,default=Path("hf_model"))
- p.add_argument("--data-dir",type=Path,default=Path("data_stage18i_math"))
+ p.add_argument("--data-dir",type=Path,default=Path("data_stage18i_foundations/phase1"))
  p.add_argument("--checkpoint-dir",type=Path,default=Path("stage10_foundations/phase1"))
  p.add_argument("--output",type=Path,default=Path("stage10_foundations/phase1_qa.json"))
  p.add_argument("--split",choices=["validation","test"],default="test")
@@ -28,7 +28,7 @@ def main():
  rows=[json.loads(line) for line in (a.data_dir/(a.split+".jsonl")).open(encoding="utf-8")]
  chosen=[];counts=collections.Counter()
  for row in rows:
-  key=(row["category"],row["mode"])
+  key=row["category"]
   if counts[key]<a.per_category:
    chosen.append(row);counts[key]+=1
  sp=spm.SentencePieceProcessor(model_file=str(a.model_dir/"tokenizer.model"))
@@ -46,12 +46,12 @@ def main():
    q=row["messages"][1]["content"]
    answer=infer(model,sp,SVAROG_SYSTEM,q,a.max_new)
    result=final_number(answer)
-   key=row["category"]+"/"+row["mode"]
+   key=row["category"]
    scores[key]["total"]+=1
-   scores[key]["correct"]+=int(result==row["result"])
-   report.append({"step":step,"category":row["category"],"mode":row["mode"],
-                  "operands":row["operands"],"expected":row["result"],
-                  "answer":answer,"parsed":result,"correct":result==row["result"]})
+   expected=int(row["messages"][2]["content"].strip().rstrip("."))
+   scores[key]["correct"]+=int(result==expected)
+   report.append({"step":step,"category":row["category"],"question":q,
+                  "expected":expected,"answer":answer,"parsed":result,"correct":result==expected})
   print("QA",step,a.split,dict(scores),flush=True)
  a.output.parent.mkdir(parents=True,exist_ok=True)
  a.output.write_text(json.dumps({"split":a.split,"per_category":a.per_category,"results":report},ensure_ascii=False,indent=2),encoding="utf-8")
